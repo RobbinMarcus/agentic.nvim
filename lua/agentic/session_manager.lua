@@ -1,6 +1,6 @@
 -- The session manager class glue together the Chat widget, the agent instance, and the message writer.
 -- It is responsible for managing the session state, routing messages between components, and handling user interactions.
--- When the user creates a new session, the SessionManager should be responsible for cleaning the eixsting session (if any) and initializing a new one.
+-- When the user creates a new session, the SessionManager should be responsible for cleaning the existing session (if any) and initializing a new one.
 -- Wheen the user switches the provider, the SessionManager should handle the transition smoothly,
 -- ensuring that the new session is properly set up and all the previous messages are sent to the new agent provider without duplicating them in the chat widget
 
@@ -13,6 +13,7 @@ local P = {}
 ---@field widget agentic.ui.ChatWidget
 ---@field agent agentic.acp.ACPClient
 ---@field message_writer agentic.ui.MessageWriter
+---@field selected_files string[] Absolute paths of selected files to be sent with the next prompt, should be cleared after sending
 local SessionManager = {}
 
 ---@param tab_page_id integer
@@ -20,11 +21,13 @@ function SessionManager:new(tab_page_id)
     local AgentInstance = require("agentic.acp.agent_instance")
     local Config = require("agentic.config")
     local ChatWidget = require("agentic.ui.chat_widget")
+    local MessageWriter = require("agentic.ui.message_writer")
 
     local instance = setmetatable({
         message_writer = nil,
         session_id = nil,
         current_provider = Config.provider,
+        selected_files = {},
     }, self)
     self.__index = self
 
@@ -67,11 +70,21 @@ function SessionManager:new(tab_page_id)
     instance.agent = agent
 
     instance.widget = ChatWidget:new(tab_page_id, function(input_text)
+        local files = vim.tbl_map(function(f)
+            local path = vim.fn.fnamemodify(f, ":p:~:.")
+            local name = vim.fn.fnamemodify(path, ":t")
+
+            return instance.agent:create_resource_link_content(path, name)
+        end, instance.selected_files or {})
+
+        instance.selected_files = {}
+
         instance.agent:send_prompt(instance.session_id, {
             {
                 type = "text",
                 text = input_text,
             },
+            unpack(files),
         }, function(_response, err)
             if err then
                 vim.notify("Error submitting prompt: " .. vim.inspect(err))
@@ -80,11 +93,10 @@ function SessionManager:new(tab_page_id)
         end)
     end)
 
-    local MessageWriter = require("agentic.ui.message_writer")
-    if instance.widget.panels.chat and instance.widget.panels.chat.bufnr then
-        instance.message_writer =
-            MessageWriter:new(instance.widget.panels.chat.bufnr)
-    end
+    instance:_add_initial_file_to_selection()
+
+    instance.message_writer =
+        MessageWriter:new(instance.widget.panels.chat.bufnr)
 
     agent:create_session(function(response, err)
         if err or not response then
@@ -95,6 +107,15 @@ function SessionManager:new(tab_page_id)
     end)
 
     return instance
+end
+
+function SessionManager:_add_initial_file_to_selection()
+    local buf_path = vim.api.nvim_buf_get_name(self.widget.main_buffer.bufnr)
+
+    local stat = vim.uv.fs_stat(buf_path)
+    if stat == nil or stat.type == "file" then
+        table.insert(self.selected_files, buf_path)
+    end
 end
 
 ---@param session agentic.SessionManager

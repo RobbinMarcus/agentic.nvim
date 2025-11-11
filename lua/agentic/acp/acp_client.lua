@@ -528,6 +528,38 @@ function ACPClient:is_connected()
     return self.state ~= "disconnected" and self.state ~= "error"
 end
 
+---@param uri string
+---@param name string
+---@param description? string
+---@param mime_type? string
+---@param size? number
+---@param title? string
+---@param annotations? agentic.acp.Annotations
+---@return agentic.acp.ResourceLinkContent
+function ACPClient:create_resource_link_content(
+    uri,
+    name,
+    description,
+    mime_type,
+    size,
+    title,
+    annotations
+)
+    ---@type agentic.acp.ResourceLinkContent
+    local resource = {
+        type = "resource_link",
+        uri = uri,
+        name = name,
+        description = description,
+        mimeType = mime_type,
+        size = size,
+        title = title,
+        annotations = annotations,
+    }
+
+    return resource
+end
+
 return ACPClient
 
 ---@class agentic.acp.ClientCapabilities

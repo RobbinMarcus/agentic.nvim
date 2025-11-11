@@ -10,12 +10,12 @@ local event = require("nui.utils.autocmd").event
 ---@field input_container integer
 
 ---@class agentic.ui.ChatWidgetPanels
----@field input? NuiSplit
----@field chat? NuiSplit
----@field todos? NuiSplit
----@field files? NuiSplit
----@field code? NuiSplit
----@field layout? NuiLayout
+---@field input NuiSplit
+---@field chat NuiSplit
+---@field todos NuiSplit
+---@field files NuiSplit
+---@field code NuiSplit
+---@field layout NuiLayout
 
 ---@class agentic.ui.ChatWidgetMainBuffer
 ---@field bufnr? integer
@@ -43,9 +43,8 @@ function ChatWidget:new(tab_page_id, on_submit_input)
         winid = 0,
         selection = nil,
     }
-    instance.panels = {}
 
-    instance:_initialize()
+    instance.panels = instance:_initialize()
 
     return instance
 end
@@ -100,56 +99,82 @@ function ChatWidget:_submit_input()
     self.on_submit_input(prompt)
 end
 
+---@return agentic.ui.ChatWidgetPanels
 function ChatWidget:_initialize()
     self.main_buffer.winid = vim.api.nvim_get_current_win()
     self.main_buffer.bufnr = vim.api.nvim_get_current_buf()
 
-    self.panels.chat = self._make_split({
+    local chat = self._make_split({
         buf_options = {
             filetype = "AgenticChat",
+            modifiable = false,
         },
     })
 
-    self.panels.files = self._make_split({
+    local files = self._make_split({
         buf_options = {
             filetype = "AgenticFiles",
+            modifiable = false,
         },
     })
 
-    self.panels.input = self._make_split({
+    local code = self._make_split({
+        buf_options = {
+            filetype = "AgenticInput",
+            modifiable = false,
+        },
+    })
+
+    local todos = self._make_split({
+        buf_options = {
+            filetype = "AgenticInput",
+            modifiable = false,
+        },
+    })
+
+    local input = self._make_split({
         buf_options = {
             filetype = "AgenticInput",
         },
     })
 
     -- Only start in insert mode the first time the input panel is opened
-    self.panels.input:on(event.BufEnter, function()
-        self.panels.input:off(event.BufEnter)
+    input:on(event.BufEnter, function()
+        input:off(event.BufEnter)
         vim.cmd("startinsert!")
     end)
 
-    self.panels.input:map("n", "<C-s>", function()
+    input:map("n", "<C-s>", function()
         self:_submit_input()
     end)
-    self.panels.input:map("i", "<C-s>", function()
+    input:map("i", "<C-s>", function()
         self:_submit_input()
     end)
-    self.panels.input:map("n", "q", function()
+    input:map("n", "q", function()
         self:hide()
     end)
 
-    self.panels.layout = Layout(
+    local layout = Layout(
         {
             position = "right",
             relative = "editor",
             size = "40%",
         },
         Layout.Box({
-            Layout.Box(self.panels.chat, { grow = 1 }),
-            Layout.Box(self.panels.files, { size = 10 }),
-            Layout.Box(self.panels.input, { size = 15 }),
+            Layout.Box(chat, { grow = 1 }),
+            Layout.Box(files, { size = 10 }),
+            Layout.Box(input, { size = 15 }),
         }, { dir = "col" })
     )
+
+    return { ---@type agentic.ui.ChatWidgetPanels
+        chat = chat,
+        files = files,
+        input = input,
+        layout = layout,
+        code = code,
+        todos = todos,
+    }
 end
 
 ---@param props nui_split_options
