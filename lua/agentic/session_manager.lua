@@ -10,6 +10,7 @@ local Logger = require("agentic.utils.logger")
 local P = {}
 
 ---@class agentic.SessionManager
+---@field session_id string|nil
 ---@field widget agentic.ui.ChatWidget
 ---@field agent agentic.acp.ACPClient
 ---@field message_writer agentic.ui.MessageWriter
@@ -31,36 +32,7 @@ function SessionManager:new(tab_page_id)
     }, self)
     self.__index = self
 
-    -- FIXIT: this wont work, as there's only 1 agent instance per provider globally, so the handlers will be ignored
-    -- I need to create some pub/sub mechanism to route the messages to the correct session manager based on session id
-    local agent = AgentInstance.get_instance(Config.provider, {
-        on_error = function(err)
-            Logger.debug("Agent error: ", err)
-            vim.notify(
-                "Agent error: " .. err,
-                vim.log.levels.ERROR,
-                { title = "🐞 Agent Error" }
-            )
-
-            -- FIXIT: maybe write the error to the chat widget?
-        end,
-
-        on_read_file = function(...)
-            P.on_read_file(...)
-        end,
-
-        on_write_file = function(...)
-            P.on_write_file(...)
-        end,
-
-        on_session_update = function(update)
-            P.on_session_update(instance, update)
-        end,
-
-        on_request_permission = function(request)
-            -- FIXIT: Handle permission requests from the agent
-        end,
-    })
+    local agent = AgentInstance.get_instance(Config.provider)
 
     if not agent then
         -- no log, it was already logged in AgentInstance
@@ -127,7 +99,37 @@ function SessionManager:new(tab_page_id)
     instance.message_writer =
         MessageWriter:new(instance.widget.panels.chat.bufnr)
 
-    agent:create_session(function(response, err)
+    ---@type agentic.acp.ClientHandlers
+    local handlers = {
+        on_error = function(err)
+            Logger.debug("Agent error: ", err)
+            vim.notify(
+                "Agent error: " .. err,
+                vim.log.levels.ERROR,
+                { title = "🐞 Agent Error" }
+            )
+
+            -- TODO: maybe write the error to the chat widget?
+        end,
+
+        on_read_file = function(...)
+            P.on_read_file(...)
+        end,
+
+        on_write_file = function(...)
+            P.on_write_file(...)
+        end,
+
+        on_session_update = function(update)
+            P.on_session_update(instance, update)
+        end,
+
+        on_request_permission = function(request, callback)
+            -- FIXIT: Handle permission requests from the agent
+        end,
+    }
+
+    agent:create_session(handlers, function(response, err)
         if err or not response then
             return
         end
@@ -282,6 +284,14 @@ function P._read_file_from_buf_or_disk(abs_path)
         return vim.split(content, "\n"), nil
     else
         return {}, open_err
+    end
+end
+
+function SessionManager:destroy()
+    self.widget:destroy()
+    self.message_writer:destroy()
+    if self.session_id then
+        self.agent:unsubscribe(self.session_id)
     end
 end
 

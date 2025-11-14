@@ -40,11 +40,6 @@ function MessageWriter:new(bufnr)
 
     vim.bo[bufnr].syntax = "markdown"
 
-    local ok, _ = pcall(vim.treesitter.start, bufnr, "markdown")
-    if not ok then
-        Logger.debug("MessageWriter: Treesitter markdown parser not available")
-    end
-
     return instance
 end
 
@@ -278,35 +273,7 @@ function MessageWriter:_prepare_block_lines(update, kind, title)
     return lines
 end
 
----@param tool_call_id string
-function MessageWriter:remove_tool_call_block(tool_call_id)
-    local tracker = self.tool_call_blocks[tool_call_id]
-    if not tracker then
-        return
-    end
-
-    pcall(
-        vim.api.nvim_buf_del_extmark,
-        self.bufnr,
-        self.ns_id,
-        tracker.extmark_id
-    )
-
-    if tracker.decoration_extmark_ids then
-        for _, id in ipairs(tracker.decoration_extmark_ids) do
-            pcall(
-                vim.api.nvim_buf_del_extmark,
-                self.bufnr,
-                self.decorations_ns_id,
-                id
-            )
-        end
-    end
-
-    self.tool_call_blocks[tool_call_id] = nil
-end
-
-function MessageWriter:cleanup()
+function MessageWriter:destroy()
     pcall(vim.api.nvim_buf_clear_namespace, self.bufnr, self.ns_id, 0, -1)
     pcall(
         vim.api.nvim_buf_clear_namespace,

@@ -1,4 +1,4 @@
-local logger = require("agentic.utils.logger")
+local Logger = require("agentic.utils.logger")
 local transport_module = require("agentic.acp.acp_transport")
 
 ---@class agentic.acp.ACPClient
@@ -10,7 +10,7 @@ local transport_module = require("agentic.acp.acp_transport")
 ---@field agent_capabilities? agentic.acp.AgentCapabilities
 ---@field callbacks table<number, fun(result?: table, err?: agentic.acp.ACPError)>
 ---@field transport? agentic.acp.ACPTransportInstance
----@field handlers? agentic.acp.ClientHandlers
+---@field subscribers table<string, agentic.acp.ClientHandlers>
 local ACPClient = {}
 
 --- ACP Error codes
@@ -25,13 +25,12 @@ ACPClient.ERROR_CODES = {
 }
 
 ---@param config agentic.acp.ClientConfig
----@param handlers agentic.acp.ClientHandlers
 ---@return agentic.acp.ACPClient
-function ACPClient:new(config, handlers)
+function ACPClient:new(config)
     ---@type agentic.acp.ACPClient
     local instance = {
         provider_config = config,
-        handlers = handlers,
+        subscribers = {},
         id_counter = 0,
         protocol_version = 1,
         capabilities = {
@@ -56,6 +55,23 @@ function ACPClient:new(config, handlers)
     client:_setup_transport()
     client:_connect()
     return client
+end
+
+---@param session_id string
+---@param handlers agentic.acp.ClientHandlers
+function ACPClient:_subscribe(session_id, handlers)
+    self.subscribers[session_id] = handlers
+end
+
+---@param session_id string
+function ACPClient:unsubscribe(session_id)
+    self.subscribers[session_id] = nil
+end
+
+---@param session_id string
+---@return agentic.acp.ClientHandlers|nil
+function ACPClient:_get_subscriber(session_id)
+    return self.subscribers[session_id]
 end
 
 function ACPClient:_setup_transport()
@@ -138,7 +154,7 @@ function ACPClient:_send_request(method, params, callback)
 
     local data = vim.json.encode(message)
 
-    logger.debug_to_file("request: ", message)
+    Logger.debug_to_file("request: ", message)
 
     self.transport:send(data)
 end
@@ -154,7 +170,7 @@ function ACPClient:_send_notification(method, params)
 
     local data = vim.json.encode(message)
 
-    logger.debug_to_file("notification: ", message, "\n\n")
+    Logger.debug_to_file("notification: ", message, "\n\n")
 
     self.transport:send(data)
 end
@@ -166,7 +182,7 @@ function ACPClient:_send_result(id, result)
     local message = { jsonrpc = "2.0", id = id, result = result }
 
     local data = vim.json.encode(message)
-    logger.debug_to_file("request:", message)
+    Logger.debug_to_file("request:", message)
 
     self.transport:send(data)
 end
@@ -187,7 +203,7 @@ end
 ---Handles raw JSON-RPC message received from the transport
 ---@param message table
 function ACPClient:_handle_message(message)
-    logger.debug_to_file("response: ", message)
+    Logger.debug_to_file("response: ", message)
 
     -- Check if this is a notification (has method but no id, or has both method and id for notifications)
     if message.method and not message.result and not message.error then
@@ -256,8 +272,14 @@ function ACPClient:_handle_session_update(params)
         return
     end
 
+    local subscriber = self:_get_subscriber(session_id)
+    if not subscriber then
+        Logger.debug("No subscriber found for session_id: " .. session_id)
+        return
+    end
+
     vim.schedule(function()
-        self.handlers.on_session_update(update)
+        subscriber.on_session_update(update)
     end)
 end
 
@@ -269,8 +291,15 @@ function ACPClient:_handle_request_permission(message_id, request)
         return
     end
 
+    local session_id = request.sessionId
+    local subscriber = self:_get_subscriber(session_id)
+    if not subscriber then
+        Logger.debug("No subscriber found for session_id: " .. session_id)
+        return
+    end
+
     vim.schedule(function()
-        self.handlers.on_request_permission(request, function(option_id)
+        subscriber.on_request_permission(request, function(option_id)
             self:_send_result(
                 message_id,
                 { --- @type agentic.acp.RequestPermissionOutcome
@@ -298,8 +327,14 @@ function ACPClient:_handle_read_text_file(message_id, params)
         return
     end
 
+    local subscriber = self:_get_subscriber(session_id)
+    if not subscriber then
+        Logger.debug("No subscriber found for session_id: " .. session_id)
+        return
+    end
+
     vim.schedule(function()
-        self.handlers.on_read_file(
+        subscriber.on_read_file(
             path,
             params.line ~= vim.NIL and params.line or nil,
             params.limit ~= vim.NIL and params.limit or nil,
@@ -325,8 +360,14 @@ function ACPClient:_handle_write_text_file(message_id, params)
         return
     end
 
+    local subscriber = self:_get_subscriber(session_id)
+    if not subscriber then
+        Logger.debug("No subscriber found for session_id: " .. session_id)
+        return
+    end
+
     vim.schedule(function()
-        self.handlers.on_write_file(path, content, function(error)
+        subscriber.on_write_file(path, content, function(error)
             self:_send_result(message_id, error == nil and vim.NIL or error)
         end)
     end)
@@ -379,10 +420,10 @@ function ACPClient:_initialize()
 
         -- FIXIT: auth_method should be validated against available methods from the agent message
         if auth_method then
-            logger.debug("Authenticating with method ", auth_method)
+            Logger.debug("Authenticating with method ", auth_method)
             self:_authenticate(auth_method)
         else
-            logger.debug("No authentication method found or specified")
+            Logger.debug("No authentication method found or specified")
             self:_set_state("ready")
         end
     end)
@@ -397,8 +438,9 @@ function ACPClient:_authenticate(method_id)
     end)
 end
 
+---@param handlers agentic.acp.ClientHandlers
 ---@param callback fun(result: table|nil, err: agentic.acp.ACPError|nil)
-function ACPClient:create_session(callback)
+function ACPClient:create_session(handlers, callback)
     local cwd = vim.fn.getcwd()
 
     self:_send_request("session/new", {
@@ -425,6 +467,10 @@ function ACPClient:create_session(callback)
             return
         end
 
+        if result.sessionId then
+            self:_subscribe(result.sessionId, handlers)
+        end
+
         callback(result, err)
     end)
 end
@@ -432,7 +478,8 @@ end
 ---@param session_id string
 ---@param cwd string
 ---@param mcp_servers table[]?
-function ACPClient:load_session(session_id, cwd, mcp_servers)
+---@param handlers agentic.acp.ClientHandlers
+function ACPClient:load_session(session_id, cwd, mcp_servers, handlers)
     --FIXIT: check if it's possible to ignore this check and just try to send load message
     -- handle the response error properly also
     if
@@ -444,6 +491,8 @@ function ACPClient:load_session(session_id, cwd, mcp_servers)
         )
         return
     end
+
+    self:_subscribe(session_id, handlers)
 
     self:_send_request("session/load", {
         sessionId = session_id,
@@ -471,6 +520,7 @@ function ACPClient:cancel_session(session_id)
     self:_send_notification("session/cancel", {
         sessionId = session_id,
     })
+    self:unsubscribe(session_id)
 end
 
 ---@return boolean
@@ -727,6 +777,7 @@ return ACPClient
 ---@alias agentic.acp.ClientHandlers.on_write_file fun(path: string, content: string, callback: fun(error: string|nil)): nil
 ---@alias agentic.acp.ClientHandlers.on_error fun(err: agentic.acp.ACPError): nil
 
+--- Handlers for a specific session. Each session subscribes with its own handlers.
 ---@class agentic.acp.ClientHandlers
 ---@field on_session_update agentic.acp.ClientHandlers.on_session_update
 ---@field on_request_permission agentic.acp.ClientHandlers.on_request_permission

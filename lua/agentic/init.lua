@@ -68,6 +68,9 @@ function Agentic.setup(opts)
     end
 
     traps_set = true
+
+    vim.treesitter.language.register("markdown", "AgenticChat")
+
     vim.api.nvim_create_autocmd("VimLeavePre", {
         group = cleanup_group,
         callback = function()
@@ -84,7 +87,7 @@ function Agentic.setup(opts)
             if tab_id and chat_widgets_by_tab[tab_id] then
                 if chat_widgets_by_tab[tab_id] then
                     pcall(function()
-                        chat_widgets_by_tab[tab_id].widget:destroy()
+                        chat_widgets_by_tab[tab_id]:destroy()
                     end)
                 end
                 chat_widgets_by_tab[tab_id] = nil

@@ -18,8 +18,7 @@ local AgentInstance = {}
 AgentInstance.instances = {}
 
 ---@param provider_name string
----@param handlers agentic.acp.ClientHandlers
-function AgentInstance.get_instance(provider_name, handlers)
+function AgentInstance.get_instance(provider_name)
     local Client = require("agentic.acp.acp_client")
 
     if AgentInstance.instances[provider_name] ~= nil then
@@ -33,12 +32,13 @@ function AgentInstance.get_instance(provider_name, handlers)
         return nil
     end
 
-    local agent_client = Client:new(provider_config, handlers)
+    local agent_client = Client:new(provider_config)
 
     AgentInstance.instances[provider_name] = agent_client
 
     return agent_client
 end
+
 ---Cleanup all active instances and processes
 ---This is called automatically on VimLeavePre and signal handlers
 ---Can also be called manually if needed
