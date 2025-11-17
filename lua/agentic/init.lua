@@ -29,13 +29,15 @@ local function get_session_for_tab_page()
         chat_widgets_by_tab[tab_page_id] = instance
     end
 
-    return instance
+    return instance --[[@as agentic.SessionManager]]
 end
 
 --- Opens the chat widget for the current tab page
 --- Safe to call multiple times
 function Agentic.open()
-    get_session_for_tab_page().widget:show()
+    local session = get_session_for_tab_page()
+    session:add_selection_or_file_to_session()
+    session.widget:show()
 end
 
 --- Closes the chat widget for the current tab page
@@ -47,7 +49,27 @@ end
 --- Toggles the chat widget for the current tab page
 --- Safe to call multiple times
 function Agentic.toggle()
-    get_session_for_tab_page().widget:toggle()
+    local session = get_session_for_tab_page()
+
+    if session.widget:is_open() then
+        session.widget:hide()
+    else
+        session:add_selection_or_file_to_session()
+        session.widget:show()
+    end
+end
+
+function Agentic.add_selection()
+    local session = get_session_for_tab_page()
+    session:add_selection_to_session()
+
+    session.widget:show()
+end
+
+function Agentic.add_file()
+    local session = get_session_for_tab_page()
+    session:add_file_to_session()
+    session.widget:show()
 end
 
 local traps_set = false
@@ -85,11 +107,9 @@ function Agentic.setup(opts)
         callback = function(ev)
             local tab_id = tonumber(ev.match)
             if tab_id and chat_widgets_by_tab[tab_id] then
-                if chat_widgets_by_tab[tab_id] then
-                    pcall(function()
-                        chat_widgets_by_tab[tab_id]:destroy()
-                    end)
-                end
+                pcall(function()
+                    chat_widgets_by_tab[tab_id]:destroy()
+                end)
                 chat_widgets_by_tab[tab_id] = nil
             end
         end,

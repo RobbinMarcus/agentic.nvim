@@ -1,5 +1,6 @@
 local Logger = require("agentic.utils.logger")
 local transport_module = require("agentic.acp.acp_transport")
+local FileSystem = require("agentic.utils.file_system")
 
 ---@class agentic.acp.ACPClient
 ---@field provider_config agentic.acp.ClientConfig
@@ -528,32 +529,72 @@ function ACPClient:is_connected()
     return self.state ~= "disconnected" and self.state ~= "error"
 end
 
----@param uri string
----@param name string
----@param description? string
----@param mime_type? string
----@param size? number
----@param title? string
+---@param text string|table
+---@return agentic.acp.UserMessageChunk
+function ACPClient:generate_user_message(text)
+    return self:_generate_message_chunk(text, "user_message_chunk") --[[@as agentic.acp.UserMessageChunk]]
+end
+
+---@param text string|table
+---@return agentic.acp.AgentMessageChunk
+function ACPClient:generate_agent_message(text)
+    return self:_generate_message_chunk(text, "agent_message_chunk") --[[@as agentic.acp.AgentMessageChunk]]
+end
+
+---@param text string|table
+---@param role "user_message_chunk" | "agent_message_chunk" | "agent_thought_chunk"
+function ACPClient:_generate_message_chunk(text, role)
+    local content_text
+
+    if type(text) == "string" then
+        content_text = text
+    elseif type(text) == "table" then
+        content_text = table.concat(text, "\n")
+    else
+        content_text = vim.inspect(text)
+    end
+
+    return { ---@type agentic.acp.UserMessageChunk|agentic.acp.AgentMessageChunk|agentic.acp.AgentThoughtChunk
+        sessionUpdate = role,
+        content = {
+            type = "text",
+            text = content_text,
+        },
+    }
+end
+
+---@param path string
+---@param text string
+---@param annotations? agentic.acp.Annotations
+---@return agentic.acp.ResourceContent
+function ACPClient:create_resource_content(path, text, annotations)
+    local uri = "file://" .. FileSystem.to_absolute_path(path)
+
+    ---@type agentic.acp.ResourceContent
+    local resource = {
+        type = "resource",
+        resource = {
+            uri = uri,
+            text = text,
+        },
+        annotations = annotations,
+    }
+
+    return resource
+end
+
+---@param path string
 ---@param annotations? agentic.acp.Annotations
 ---@return agentic.acp.ResourceLinkContent
-function ACPClient:create_resource_link_content(
-    uri,
-    name,
-    description,
-    mime_type,
-    size,
-    title,
-    annotations
-)
+function ACPClient:create_resource_link_content(path, annotations)
+    local uri = "file://" .. FileSystem.to_absolute_path(path)
+    local name = FileSystem.base_name(path)
+
     ---@type agentic.acp.ResourceLinkContent
     local resource = {
         type = "resource_link",
         uri = uri,
         name = name,
-        description = description,
-        mimeType = mime_type,
-        size = size,
-        title = title,
         annotations = annotations,
     }
 
@@ -567,9 +608,6 @@ return ACPClient
 ---@field terminal boolean
 ---@field clientInfo { name: string, version: string }
 
---FIXIT: test what happens if we inform we cant read file or cant write
--- note: it might require to comment the methods below
---
 ---@class agentic.acp.FileSystemCapability
 ---@field readTextFile boolean
 ---@field writeTextFile boolean
@@ -643,12 +681,14 @@ return ACPClient
 
 ---@class agentic.acp.EmbeddedResource
 ---@field uri string
----@field text? string
+---@field text string
 ---@field blob? string
 ---@field mimeType? string
 
+---@alias agentic.acp.Annotations.Audience "user" | "assistant"
+
 ---@class agentic.acp.Annotations
----@field audience? any[]
+---@field audience? agentic.acp.Annotations.Audience[]
 ---@field lastModified? string
 ---@field priority? number
 
@@ -776,6 +816,13 @@ return ACPClient
 ---@alias agentic.acp.ClientHandlers.on_read_file fun(path: string, line: integer | nil, limit: integer | nil, callback: fun(content: string|nil)): nil
 ---@alias agentic.acp.ClientHandlers.on_write_file fun(path: string, content: string, callback: fun(error: string|nil)): nil
 ---@alias agentic.acp.ClientHandlers.on_error fun(err: agentic.acp.ACPError): nil
+
+---@class agentic.Selection
+---@field lines string[] The selected code lines
+---@field start_line integer Starting line number (1-indexed)
+---@field end_line integer Ending line number (1-indexed, inclusive)
+---@field file_path string Relative file path
+---@field file_type string File type/extension
 
 --- Handlers for a specific session. Each session subscribes with its own handlers.
 ---@class agentic.acp.ClientHandlers

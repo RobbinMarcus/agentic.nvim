@@ -160,6 +160,7 @@ function M.create_stdio_transport(config, callbacks)
                         data:match("Session not found")
                         or data:match("session/prompt")
                         or data:match("Spawning Claude Code process")
+                        or data:match("does not appear in the file:")
                     )
                 then
                     vim.schedule(function()

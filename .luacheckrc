@@ -16,6 +16,9 @@ ignore = {
     -- "122", -- Indirectly setting a readonly global
 }
 
+unused_args = false
+unused = false
+
 read_globals = {
     "vim",
     "Snacks",

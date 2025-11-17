@@ -1,5 +1,6 @@
 local Logger = require("agentic.utils.logger")
 local ExtmarkBlock = require("agentic.utils.extmark_block")
+local BufHelpers = require("agentic.utils.buf_helpers")
 
 ---@class agentic.ui.MessageWriter.BlockTracker
 ---@field extmark_id integer Range extmark spanning the block
@@ -7,6 +8,8 @@ local ExtmarkBlock = require("agentic.utils.extmark_block")
 ---@field kind string Tool call kind (read, edit, etc.)
 ---@field title string Tool call title/command (stored for updates)
 ---@field status string Current status (pending, completed, etc.)
+--- FIXIT: the end_row should be removed, as it is redundant with the extmark details, and can be incorrect if the buffer is edited
+---
 ---@field end_row? integer End row of the block (cached to avoid expensive queries)
 
 ---@class agentic.ui.MessageWriter
@@ -60,11 +63,6 @@ function MessageWriter:new(bufnr)
         tool_call_blocks = {},
     }, self)
 
-    -- Make buffer readonly for users, but we can still write programmatically
-    vim.bo[bufnr].modifiable = false
-
-    vim.bo[bufnr].syntax = "markdown"
-
     return instance
 end
 
@@ -95,26 +93,20 @@ function MessageWriter:write_message(update)
     end
 
     local lines = vim.split(text, "\n", { plain = true })
-    self:_append_lines(lines)
-    self:_append_lines({ "", "" })
+
+    BufHelpers.with_modifiable(self.bufnr, function()
+        self:_append_lines(lines)
+        self:_append_lines({ "", "" })
+    end)
 end
 
 ---@param lines string[]
 ---@return nil
 function MessageWriter:_append_lines(lines)
-    if not vim.api.nvim_buf_is_valid(self.bufnr) then
-        return
-    end
-
-    vim.bo[self.bufnr].modifiable = true
-
     vim.api.nvim_buf_set_lines(self.bufnr, -1, -1, false, lines)
 
-    vim.bo[self.bufnr].modifiable = false
-
-    vim.api.nvim_buf_call(self.bufnr, function()
-        vim.cmd("normal! G")
-        vim.cmd("redraw")
+    BufHelpers.execute_on_buffer(self.bufnr, function()
+        vim.cmd("normal! G0")
     end)
 end
 
@@ -125,44 +117,44 @@ function MessageWriter:write_tool_call_block(update)
         return
     end
 
-    local kind = update.kind or "tool_call"
-    local command = update.title or ""
+    BufHelpers.with_modifiable(self.bufnr, function(bufnr)
+        local kind = update.kind or "tool_call"
+        local command = update.title or ""
 
-    vim.bo[self.bufnr].modifiable = true
+        local start_row = vim.api.nvim_buf_line_count(bufnr)
+        local lines = self:_prepare_block_lines(update, kind, command)
+        self:_append_lines(lines)
 
-    local start_row = vim.api.nvim_buf_line_count(self.bufnr)
-    local lines = self:_prepare_block_lines(update, kind, command)
-    self:_append_lines(lines)
-    local end_row = vim.api.nvim_buf_line_count(self.bufnr) - 1
+        local end_row = vim.api.nvim_buf_line_count(bufnr) - 1
 
-    local decoration_ids =
-        ExtmarkBlock.render_block(self.bufnr, self.decorations_ns_id, {
-            header_line = start_row,
-            body_start = start_row + 1,
-            body_end = end_row - 1,
-            footer_line = end_row,
-            hl_group = self.hl_group,
-        })
+        local decoration_ids =
+            ExtmarkBlock.render_block(bufnr, self.decorations_ns_id, {
+                header_line = start_row,
+                body_start = start_row + 1,
+                body_end = end_row - 1,
+                footer_line = end_row,
+                hl_group = self.hl_group,
+            })
 
-    -- Create range extmark for tracking (omit end_col to default to end of line)
-    local extmark_id =
-        vim.api.nvim_buf_set_extmark(self.bufnr, self.ns_id, start_row, 0, {
+        -- Create range extmark for tracking (omit end_col to default to end of line)
+        local extmark_id =
+            vim.api.nvim_buf_set_extmark(bufnr, self.ns_id, start_row, 0, {
+                end_row = end_row,
+                right_gravity = false,
+            })
+
+        -- Track externally (store kind and title for ToolCallUpdate which lacks them)
+        self.tool_call_blocks[update.toolCallId] = {
+            extmark_id = extmark_id,
+            decoration_extmark_ids = decoration_ids,
+            kind = kind,
+            title = command,
+            status = update.status,
             end_row = end_row,
-            right_gravity = false,
-        })
+        }
 
-    -- Track externally (store kind and title for ToolCallUpdate which lacks them)
-    self.tool_call_blocks[update.toolCallId] = {
-        extmark_id = extmark_id,
-        decoration_extmark_ids = decoration_ids,
-        kind = kind,
-        title = command,
-        status = update.status,
-        end_row = end_row,
-    }
-
-    self:_append_lines({ "", "" })
-    vim.bo[self.bufnr].modifiable = false
+        self:_append_lines({ "", "" })
+    end)
 end
 
 ---@param update agentic.acp.ToolCallUpdate
@@ -205,51 +197,49 @@ function MessageWriter:update_tool_call_block(update)
         return
     end
 
-    vim.bo[self.bufnr].modifiable = true
+    BufHelpers.with_modifiable(self.bufnr, function(bufnr)
+        for _, id in ipairs(tracker.decoration_extmark_ids) do
+            pcall(
+                vim.api.nvim_buf_del_extmark,
+                bufnr,
+                self.decorations_ns_id,
+                id
+            )
+        end
 
-    for _, id in ipairs(tracker.decoration_extmark_ids) do
-        pcall(
-            vim.api.nvim_buf_del_extmark,
-            self.bufnr,
-            self.decorations_ns_id,
-            id
+        local new_lines =
+            self:_prepare_block_lines(update, tracker.kind, tracker.title)
+
+        vim.api.nvim_buf_set_lines(
+            bufnr,
+            start_row,
+            old_end_row + 1,
+            false,
+            new_lines
         )
-    end
 
-    local new_lines =
-        self:_prepare_block_lines(update, tracker.kind, tracker.title)
+        local new_end_row = start_row + #new_lines - 1
 
-    vim.api.nvim_buf_set_lines(
-        self.bufnr,
-        start_row,
-        old_end_row + 1,
-        false,
-        new_lines
-    )
-
-    local new_end_row = start_row + #new_lines - 1
-
-    -- Update range extmark in-place (REUSE ID)
-    vim.api.nvim_buf_set_extmark(self.bufnr, self.ns_id, start_row, 0, {
-        id = tracker.extmark_id, -- CRITICAL: reuse same ID
-        end_row = new_end_row,
-        right_gravity = false,
-    })
-
-    -- Re-apply visual decorations
-    tracker.decoration_extmark_ids =
-        ExtmarkBlock.render_block(self.bufnr, self.decorations_ns_id, {
-            header_line = start_row,
-            body_start = start_row + 1,
-            body_end = new_end_row - 1,
-            footer_line = new_end_row,
-            hl_group = self.hl_group,
+        -- Update range extmark in-place
+        vim.api.nvim_buf_set_extmark(bufnr, self.ns_id, start_row, 0, {
+            id = tracker.extmark_id, -- CRITICAL: reuse same ID
+            end_row = new_end_row,
+            right_gravity = false,
         })
 
-    vim.bo[self.bufnr].modifiable = false
+        -- Re-apply visual decorations
+        tracker.decoration_extmark_ids =
+            ExtmarkBlock.render_block(bufnr, self.decorations_ns_id, {
+                header_line = start_row,
+                body_start = start_row + 1,
+                body_end = new_end_row - 1,
+                footer_line = new_end_row,
+                hl_group = self.hl_group,
+            })
 
-    tracker.status = update.status or tracker.status
-    tracker.end_row = new_end_row
+        tracker.status = update.status or tracker.status
+        tracker.end_row = new_end_row
+    end)
 end
 
 ---@param update agentic.acp.ToolCallMessage | agentic.acp.ToolCallUpdate
@@ -261,6 +251,11 @@ function MessageWriter:_prepare_block_lines(update, kind, title)
 
     kind = kind or update.kind or "tool_call"
     title = title or update.title or ""
+
+    if kind == "fetch" and update.rawInput and update.rawInput.query then
+        kind = "WebSearch"
+    end
+
     local header_text = string.format("%s(%s)", kind, title)
     table.insert(lines, header_text)
 
@@ -345,7 +340,9 @@ function MessageWriter:display_permission_buttons(request)
 
     local button_start_row = vim.api.nvim_buf_line_count(self.bufnr)
 
-    self:_append_lines(lines_to_append)
+    BufHelpers.with_modifiable(self.bufnr, function()
+        self:_append_lines(lines_to_append)
+    end)
 
     local button_end_row = vim.api.nvim_buf_line_count(self.bufnr) - 1
 
@@ -397,17 +394,16 @@ function MessageWriter:remove_permission_buttons(start_row, end_row)
         end_row + 1
     )
 
-    vim.bo[self.bufnr].modifiable = true
-
-    pcall(
-        vim.api.nvim_buf_set_lines,
-        self.bufnr,
-        start_row,
-        end_row + 1,
-        false,
-        {}
-    )
-    vim.bo[self.bufnr].modifiable = false
+    BufHelpers.with_modifiable(self.bufnr, function(bufnr)
+        pcall(
+            vim.api.nvim_buf_set_lines,
+            bufnr,
+            start_row,
+            end_row + 1,
+            false,
+            {}
+        )
+    end)
 end
 
 function MessageWriter:destroy()

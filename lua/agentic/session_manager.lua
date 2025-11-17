@@ -1,10 +1,11 @@
 -- The session manager class glue together the Chat widget, the agent instance, and the message writer.
 -- It is responsible for managing the session state, routing messages between components, and handling user interactions.
 -- When the user creates a new session, the SessionManager should be responsible for cleaning the existing session (if any) and initializing a new one.
--- Wheen the user switches the provider, the SessionManager should handle the transition smoothly,
+-- When the user switches the provider, the SessionManager should handle the transition smoothly,
 -- ensuring that the new session is properly set up and all the previous messages are sent to the new agent provider without duplicating them in the chat widget
 
 local Logger = require("agentic.utils.logger")
+local FileSystem = require("agentic.utils.file_system")
 
 ---@class agentic._SessionManagerPrivate
 local P = {}
@@ -15,7 +16,9 @@ local P = {}
 ---@field agent agentic.acp.ACPClient
 ---@field message_writer agentic.ui.MessageWriter
 ---@field permission_manager agentic.ui.PermissionManager
----@field selected_files string[] Absolute paths of selected files to be sent with the next prompt, should be cleared after sending
+---@field current_provider string
+---@field selected_files string[]
+---@field code_selections agentic.Selection[]
 local SessionManager = {}
 
 ---@param tab_page_id integer
@@ -27,10 +30,10 @@ function SessionManager:new(tab_page_id)
     local PermissionManager = require("agentic.ui.permission_manager")
 
     local instance = setmetatable({
-        message_writer = nil,
         session_id = nil,
         current_provider = Config.provider,
         selected_files = {},
+        code_selections = {},
     }, self)
     self.__index = self
 
@@ -44,59 +47,9 @@ function SessionManager:new(tab_page_id)
     instance.agent = agent
 
     instance.widget = ChatWidget:new(tab_page_id, function(input_text)
-        local files = vim.tbl_map(function(f)
-            local path = vim.fn.fnamemodify(f, ":p:~:.")
-            local name = vim.fn.fnamemodify(path, ":t")
-
-            return instance.agent:create_resource_link_content(path, name)
-        end, instance.selected_files or {})
-
-        instance.selected_files = {}
-
-        if instance.message_writer then
-            local timestamp = os.date("%Y-%m-%d %H:%M:%S")
-            local message_with_header = string.format(
-                "## User - %s\n%s\n\n## Agent - %s",
-                timestamp,
-                input_text,
-                instance.current_provider
-            )
-            instance.message_writer:write_message({
-                sessionUpdate = "user_message_chunk",
-                content = {
-                    type = "text",
-                    text = message_with_header,
-                },
-            })
-        end
-
-        instance.agent:send_prompt(instance.session_id, {
-            {
-                type = "text",
-                text = input_text,
-            },
-            unpack(files),
-        }, function(_response, err)
-            if err then
-                vim.notify("Error submitting prompt: " .. vim.inspect(err))
-                return
-            end
-
-            vim.schedule(function()
-                local timestamp = os.date("%Y-%m-%d %H:%M:%S")
-                local finish_message = string.format(" 🏁 %s\n---", timestamp)
-                instance.message_writer:write_message({
-                    sessionUpdate = "agent_message_chunk",
-                    content = {
-                        type = "text",
-                        text = finish_message,
-                    },
-                })
-            end)
-        end)
+        ---@diagnostic disable-next-line: invisible
+        instance:_handle_input_submit(input_text)
     end)
-
-    instance:_add_initial_file_to_selection()
 
     instance.message_writer =
         MessageWriter:new(instance.widget.panels.chat.bufnr)
@@ -110,13 +63,14 @@ function SessionManager:new(tab_page_id)
     local handlers = {
         on_error = function(err)
             Logger.debug("Agent error: ", err)
-            vim.notify(
-                "Agent error: " .. err,
-                vim.log.levels.ERROR,
-                { title = "🐞 Agent Error" }
-            )
 
-            -- TODO: maybe write the error to the chat widget?
+            instance.message_writer:write_message(
+                instance.agent:generate_agent_message({
+                    "🐞 Agent Error:",
+                    "",
+                    vim.inspect(err),
+                })
+            )
         end,
 
         on_read_file = function(...)
@@ -156,25 +110,215 @@ function SessionManager:new(tab_page_id)
                 timestamp
             )
 
-            instance.message_writer:write_message({
-                sessionUpdate = "user_message_chunk",
-                content = {
-                    type = "text",
-                    text = welcome_message,
-                },
-            })
+            instance.message_writer:write_message(
+                instance.agent:generate_user_message(welcome_message)
+            )
         end)
     end)
 
     return instance
 end
 
-function SessionManager:_add_initial_file_to_selection()
-    local buf_path = vim.api.nvim_buf_get_name(self.widget.main_buffer.bufnr)
+function SessionManager:add_selection_or_file_to_session()
+    local added_selection = self:add_selection_to_session()
+
+    if not added_selection then
+        self:add_file_to_session()
+    end
+end
+
+function SessionManager:add_selection_to_session()
+    local selection = self:get_selected_text()
+
+    if selection then
+        table.insert(self.code_selections, selection)
+        self.widget:render_code_selection(self.code_selections)
+        return true
+    end
+
+    return false
+end
+
+--- @param buf number|string|nil Buffer number or path, if nil the current buffer is used or `0`
+function SessionManager:add_file_to_session(buf)
+    local bufnr = buf and vim.fn.bufnr(buf) or 0
+    local buf_path = vim.api.nvim_buf_get_name(bufnr)
+
+    -- Check if file is already in selected_files
+    for _, path in ipairs(self.selected_files) do
+        if path == buf_path then
+            return true
+        end
+    end
 
     local stat = vim.uv.fs_stat(buf_path)
+
     if stat and stat.type == "file" then
         table.insert(self.selected_files, buf_path)
+        self.widget:render_selected_files(self.selected_files)
+        return true
+    end
+
+    return false
+end
+
+--- @param input_text string
+function SessionManager:_handle_input_submit(input_text)
+    --- The message to be sent to the agent
+    --- @type agentic.acp.Content[]
+    local prompt = {
+        {
+            type = "text",
+            text = input_text,
+        },
+    }
+
+    --- The message to be written to the chat widget
+    local message_lines = {
+        string.format("## User - %s", os.date("%Y-%m-%d %H:%M:%S")),
+    }
+
+    if #self.code_selections > 0 then
+        table.insert(message_lines, "\n- Selected code:")
+
+        table.insert(prompt, {
+            type = "text",
+            text = table.concat({
+                "IMPORTANT: Focus and respect the line numbers provided in the <line_start> and <line_end> tags for each <selected_code> tag.",
+                "The selection shows ONLY the specified line range, not the entire file!",
+                "The file may contain duplicated content of the selected snippet.",
+                "When using edit tools, on the referenced files, MAKE SURE your changes target the correct lines by including sufficient surrounding context to make the match unique.",
+                "After you make edits to the referenced files, go back and read the file to verify your changes were applied correctly.",
+            }, "\n"),
+        })
+
+        for _, selection in ipairs(self.code_selections) do
+            if selection and #selection.lines > 0 then
+                -- Add line numbers to each line in the snippet
+                local numbered_lines = {}
+                for i, line in ipairs(selection.lines) do
+                    local line_num = selection.start_line + i - 1
+                    table.insert(
+                        numbered_lines,
+                        string.format("Line %d: %s", line_num, line)
+                    )
+                end
+                local numbered_snippet = table.concat(numbered_lines, "\n")
+
+                table.insert(prompt, {
+                    type = "text",
+                    text = string.format(
+                        table.concat({
+                            "<selected_code>",
+                            "<path>%s</path>",
+                            "<line_start>%s</line_start>",
+                            "<line_end>%s</line_end>",
+                            "<snippet>",
+                            "%s",
+                            "</snippet>",
+                            "</selected_code>",
+                        }, "\n"),
+                        FileSystem.to_absolute_path(selection.file_path),
+                        selection.start_line,
+                        selection.end_line,
+                        numbered_snippet
+                    ),
+                })
+
+                table.insert(
+                    message_lines,
+                    string.format(
+                        "```%s %s#L%d-L%d\n%s\n```",
+                        selection.file_type,
+                        selection.file_path,
+                        selection.start_line,
+                        selection.end_line,
+                        table.concat(selection.lines, "\n")
+                    )
+                )
+            end
+        end
+
+        self.code_selections = {}
+    end
+
+    if #self.selected_files > 0 then
+        table.insert(message_lines, "\n- Referenced files:")
+
+        for _, file_path in ipairs(self.selected_files) do
+            table.insert(
+                prompt,
+                self.agent:create_resource_link_content(file_path)
+            )
+
+            table.insert(
+                message_lines,
+                string.format("  - @%s", FileSystem.to_smart_path(file_path))
+            )
+        end
+
+        self.selected_files = {}
+    end
+
+    table.insert(message_lines, "\n\n" .. input_text)
+
+    table.insert(message_lines, "\n\n### Agent - " .. self.current_provider)
+
+    self.message_writer:write_message(
+        self.agent:generate_user_message(message_lines)
+    )
+
+    self.agent:send_prompt(self.session_id, prompt, function(_response, err)
+        if err then
+            vim.notify("Error submitting prompt: " .. vim.inspect(err))
+            return
+        end
+
+        vim.schedule(function()
+            local finish_message = string.format(
+                "### 🏁 %s\n-----",
+                os.date("%Y-%m-%d %H:%M:%S")
+            )
+            self.message_writer:write_message(
+                self.agent:generate_agent_message(finish_message)
+            )
+        end)
+    end)
+end
+
+--- Get the current visual selection as text with start and end lines
+--- @return agentic.Selection|nil
+function SessionManager:get_selected_text()
+    local mode = vim.fn.mode()
+
+    if mode == "v" or mode == "V" or mode == "" then
+        local start_pos = vim.fn.getpos("v")
+        local end_pos = vim.fn.getpos(".")
+        local start_line = start_pos[2]
+        local end_line = end_pos[2]
+
+        local lines = vim.api.nvim_buf_get_lines(
+            0,
+            start_line - 1, -- 0-indexed
+            end_line, -- exclusive
+            false
+        )
+
+        -- exit visual mode to avoid issues with the input buffer
+        local esc_key =
+            vim.api.nvim_replace_termcodes("<Esc>", true, false, true)
+        vim.api.nvim_feedkeys(esc_key, "nx", false)
+
+        ---@class agentic.Selection
+        local selection = {
+            lines = lines,
+            start_line = start_line,
+            end_line = end_line,
+            file_path = FileSystem.to_smart_path(vim.api.nvim_buf_get_name(0)),
+            file_type = vim.bo[0].filetype,
+        }
+
+        return selection
     end
 end
 
@@ -217,7 +361,7 @@ end
 
 ---@type agentic.acp.ClientHandlers.on_read_file
 function P.on_read_file(abs_path, line, limit, callback)
-    local lines, err = P._read_file_from_buf_or_disk(abs_path)
+    local lines, err = FileSystem.read_from_buffer_or_disk(abs_path)
     lines = lines or {}
 
     if err ~= nil then
@@ -240,23 +384,12 @@ end
 
 ---@type agentic.acp.ClientHandlers.on_write_file
 function P.on_write_file(abs_path, content, callback)
-    local file = io.open(abs_path, "w")
-    if file then
-        file:write(content)
-        file:close()
+    local saved = FileSystem.save_to_disk(abs_path, content)
 
-        local buffers = vim.tbl_filter(function(bufnr)
-            return vim.api.nvim_buf_is_valid(bufnr)
-                and vim.fn.fnamemodify(
-                        vim.api.nvim_buf_get_name(bufnr),
-                        ":p"
-                    )
-                    == abs_path
-        end, vim.api.nvim_list_bufs())
+    if saved then
+        local bufnr = vim.fn.bufnr(FileSystem.to_absolute_path(abs_path))
 
-        local bufnr = next(buffers)
-
-        if bufnr and vim.api.nvim_buf_is_valid(bufnr) then
+        if bufnr ~= -1 and vim.api.nvim_buf_is_valid(bufnr) then
             pcall(function()
                 vim.api.nvim_buf_call(bufnr, function()
                     local view = vim.fn.winsaveview()
@@ -271,35 +404,6 @@ function P.on_write_file(abs_path, content, callback)
     end
 
     callback("Failed to write file: " .. abs_path)
-end
-
---- Read the file content from a buffer if loaded, to get unsaved changes, or from disk otherwise
----@param abs_path string
----@return string[]|nil lines
----@return string|nil error
-function P._read_file_from_buf_or_disk(abs_path)
-    local ok, bufnr = pcall(vim.fn.bufnr, abs_path)
-    if ok then
-        if bufnr ~= -1 and vim.api.nvim_buf_is_loaded(bufnr) then
-            local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-            return lines, nil
-        end
-    end
-
-    local stat = vim.uv.fs_stat(abs_path)
-    if stat and stat.type == "directory" then
-        return {}, "Cannot read a directory as file: " .. abs_path
-    end
-
-    local file, open_err = io.open(abs_path, "r")
-    if file then
-        local content = file:read("*all")
-        file:close()
-        content = content:gsub("\r\n", "\n")
-        return vim.split(content, "\n"), nil
-    else
-        return {}, open_err
-    end
 end
 
 function SessionManager:destroy()

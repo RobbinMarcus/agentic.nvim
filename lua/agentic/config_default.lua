@@ -3,6 +3,7 @@ local ConfigDefault = {
     --- Enable printing debug messages which can be read via `:messages`
     debug = false,
 
+    ---@type "claude-acp" | "gemini-acp" | "codex-acp" | "opencode-acp"
     provider = "claude-acp",
 
     acp_providers = {
@@ -50,6 +51,7 @@ local ConfigDefault = {
     },
 
     windows = {
+        width = "40%",
         input = {
             height = 10,
         },
