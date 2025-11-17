@@ -8,9 +8,6 @@ local BufHelpers = require("agentic.utils.buf_helpers")
 ---@field kind string Tool call kind (read, edit, etc.)
 ---@field title string Tool call title/command (stored for updates)
 ---@field status string Current status (pending, completed, etc.)
---- FIXIT: the end_row should be removed, as it is redundant with the extmark details, and can be incorrect if the buffer is edited
----
----@field end_row? integer End row of the block (cached to avoid expensive queries)
 
 ---@class agentic.ui.MessageWriter
 ---@field bufnr integer
@@ -150,7 +147,6 @@ function MessageWriter:write_tool_call_block(update)
             kind = kind,
             title = command,
             status = update.status,
-            end_row = end_row,
         }
 
         self:_append_lines({ "", "" })
@@ -174,25 +170,26 @@ function MessageWriter:update_tool_call_block(update)
         return
     end
 
-    local pos, details = vim.api.nvim_buf_get_extmark_by_id(
+    local pos = vim.api.nvim_buf_get_extmark_by_id(
         self.bufnr,
         self.ns_id,
         tracker.extmark_id,
         { details = true }
     )
 
-    if not pos then
+    if not pos or not pos[1] then
         Logger.debug("Extmark not found", { tool_call_id = update.toolCallId })
         return
     end
 
     local start_row = pos[1]
+    local details = pos[3]
+    local old_end_row = details and details.end_row
 
-    local old_end_row = tracker.end_row or (details and details.end_row)
     if not old_end_row then
         Logger.debug(
             "Could not determine end row of tool call block",
-            { tool_call_id = update.toolCallId }
+            { tool_call_id = update.toolCallId, details = details }
         )
         return
     end
@@ -238,7 +235,6 @@ function MessageWriter:update_tool_call_block(update)
             })
 
         tracker.status = update.status or tracker.status
-        tracker.end_row = new_end_row
     end)
 end
 
