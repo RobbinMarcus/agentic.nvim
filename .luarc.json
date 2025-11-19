@@ -2,34 +2,64 @@
   "$schema": "https://raw.githubusercontent.com/LuaLS/vscode-lua/master/setting/schema.json",
   "runtime": {
     "version": "LuaJIT",
-    "pathStrict": true
+    "pathStrict": true,
+    "special": { "reload": "require" }
   },
   "diagnostics": {
+    "severity": {
+      "undefined-global": "Error",
+      "deprecated": "Warning",
+      "redundant-parameter": "Warning",
+      "redundant-value": "Warning"
+    },
+    "neededFileStatus": {
+      "codestyle-check": "None",
+      "no-unknown": "None",
+      "trailing-space": "None",
+      "redefined-local": "Any"
+    },
     "unusedLocalExclude": ["_*"],
-    "globals": ["vim"]
-  },
-  "workspace": {
-    "library": [
-      "$VIMRUNTIME",
-      "$VIMRUNTIME/lua",
-      "/opt/homebrew/Cellar/neovim/0.11.5/share/nvim/runtime",
-      "$PWD/lua",
-      "${3rd}/luv/library",
-      "~/.local/share/nvim/lazy/nui.nvim/lua"
-    ],
-    "checkThirdParty": false,
-    "preloadFileSize": 1000
-  },
-  "type": {
-    "checkTableShape": true
-  },
-  "hint": { "enable": true },
-  "typeFormat": {
-    "config": {
-      "format_line": "false"
+    "globals": ["vim"],
+    "groupSeverity": {
+      "strong": "Warning",
+      "strict": "Warning"
     }
   },
+  "workspace": {
+    "library": ["$VIMRUNTIME", "${3rd}/luv/library"],
+    "checkThirdParty": false,
+    "preloadFileSize": 1000,
+    "ignoreDir": [".git", "node_modules", ".github"]
+  },
+  "type": {
+    "checkTableShape": true,
+    "castNumberToInteger": true,
+    "weakUnionCheck": false,
+    "weakNilCheck": false
+  },
+  "hint": {
+    "enable": true,
+    "arrayIndex": "Enable",
+    "await": true,
+    "paramName": "All",
+    "paramType": true,
+    "setType": true
+  },
+  "format": {
+    "enable": false
+  },
+  "typeFormat": {
+    "config": { "format_line": "false" }
+  },
   "doc": {
-    "privateName": ["_*"]
+    "privateName": ["_*"],
+    "protectedName": ["__*"]
+  },
+  "completion": {
+    "callSnippet": "Both",
+    "keywordSnippet": "Replace"
+  },
+  "telemetry": {
+    "enable": false
   }
 }
