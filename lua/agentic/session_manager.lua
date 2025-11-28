@@ -46,7 +46,11 @@ function SessionManager:new(tab_page_id)
         current_provider = Config.provider,
     }, self)
 
-    local agent = AgentInstance.get_instance(Config.provider)
+    local agent = AgentInstance.get_instance(Config.provider, function(_client)
+        vim.schedule(function()
+            self:new_session()
+        end)
+    end)
 
     if not agent then
         -- no log, it was already logged in AgentInstance
@@ -91,8 +95,6 @@ function SessionManager:new(tab_page_id)
             end
         end
     )
-
-    self:new_session()
 
     return self
 end
@@ -322,8 +324,6 @@ function SessionManager:_handle_input_submit(input_text)
 
     self.agent:send_prompt(self.session_id, prompt, function(_response, err)
         vim.schedule(function()
-            self.status_animation:stop()
-
             local finish_message = string.format(
                 "\n### 🏁 %s\n-----",
                 os.date("%Y-%m-%d %H:%M:%S")
@@ -340,6 +340,8 @@ function SessionManager:_handle_input_submit(input_text)
             self.message_writer:write_message(
                 self.agent:generate_agent_message(finish_message)
             )
+
+            self.status_animation:stop()
         end)
     end)
 end

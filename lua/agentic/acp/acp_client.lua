@@ -17,6 +17,7 @@ DO NOT REMOVE them. Only update them if the underlying types change.
 --- @field callbacks table<number, fun(result?: table, err?: agentic.acp.ACPError)>
 --- @field transport? agentic.acp.ACPTransportInstance
 --- @field subscribers table<string, agentic.acp.ClientHandlers>
+--- @field _on_ready fun(client: agentic.acp.ACPClient)
 local ACPClient = {}
 
 --- ACP Error codes
@@ -31,8 +32,9 @@ ACPClient.ERROR_CODES = {
 }
 
 --- @param config agentic.acp.ACPProviderConfig
+--- @param on_ready fun(client: agentic.acp.ACPClient)
 --- @return agentic.acp.ACPClient
-function ACPClient:new(config)
+function ACPClient:new(config, on_ready)
     --- @type agentic.acp.ACPClient
     local instance = {
         provider_config = config,
@@ -54,6 +56,7 @@ function ACPClient:new(config)
         transport = nil,
         state = "disconnected",
         reconnect_count = 0,
+        _on_ready = on_ready,
     }
 
     local client = setmetatable(instance, { __index = self }) --[[@as agentic.acp.ACPClient]]
@@ -374,6 +377,10 @@ function ACPClient:_handle_write_text_file(message_id, params)
     end)
 end
 
+function ACPClient:stop()
+    self.transport:stop()
+end
+
 function ACPClient:_connect()
     if self.state ~= "disconnected" then
         return
@@ -381,14 +388,6 @@ function ACPClient:_connect()
 
     self.transport:start()
 
-    self:_initialize()
-end
-
-function ACPClient:stop()
-    self.transport:stop()
-end
-
-function ACPClient:_initialize()
     if self.state ~= "connected" then
         local error = self:_create_error(
             self.ERROR_CODES.PROTOCOL_ERROR,
@@ -420,22 +419,27 @@ function ACPClient:_initialize()
         local auth_method = self.provider_config.auth_method
 
         -- FIXIT: auth_method should be validated against available methods from the agent message
+        -- Claude reports auth methods but it returns no-implemented error when trying to authenticate with any method
         if auth_method then
             Logger.debug("Authenticating with method ", auth_method)
             self:_authenticate(auth_method)
         else
             Logger.debug("No authentication method found or specified")
             self:_set_state("ready")
+            self._on_ready(self)
         end
     end)
 end
 
+--- TODO: Authentication is NOT implemented properly yet by the ACP providers, revisit this later
+---
 --- @param method_id string
 function ACPClient:_authenticate(method_id)
     self:_send_request("authenticate", {
         methodId = method_id,
     }, function()
         self:_set_state("ready")
+        self._on_ready(self)
     end)
 end
 

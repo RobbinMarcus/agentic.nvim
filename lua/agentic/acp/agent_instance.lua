@@ -20,12 +20,16 @@ local AgentInstance = {}
 AgentInstance._instances = {}
 
 ---@param provider_name string
-function AgentInstance.get_instance(provider_name)
+--- @param on_ready fun(client: agentic.acp.ACPClient)
+function AgentInstance.get_instance(provider_name, on_ready)
     local Client = require("agentic.acp.acp_client")
 
     local client = AgentInstance._instances[provider_name]
 
     if client then
+        if on_ready then
+            on_ready(client)
+        end
         return client
     end
 
@@ -40,7 +44,7 @@ function AgentInstance.get_instance(provider_name)
         "Creating new ACP agent instance for provider: " .. provider_name
     )
 
-    client = Client:new(config)
+    client = Client:new(config, on_ready)
 
     AgentInstance._instances[provider_name] = client
 

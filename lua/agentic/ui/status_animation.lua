@@ -61,6 +61,8 @@ function StatusAnimation:start(state)
 end
 
 function StatusAnimation:stop()
+    self._state = nil
+
     if self._next_frame_handle then
         pcall(function()
             self._next_frame_handle:stop()
@@ -81,15 +83,9 @@ function StatusAnimation:stop()
     end
 
     self._extmark_id = nil
-    self._state = nil
 end
 
 function StatusAnimation:_render_frame()
-    if not self._state or not vim.api.nvim_buf_is_valid(self._bufnr) then
-        self:stop()
-        return
-    end
-
     local spinner_chars = Config.spinner_chars[self._state]
         or Config.spinner_chars.generating
 

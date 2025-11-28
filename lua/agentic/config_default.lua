@@ -13,11 +13,6 @@ local ConfigDefault = {
         ["claude-acp"] = {
             name = "Claude ACP",
             command = "claude-code-acp",
-            -- command = "pnpm",
-            -- args = {
-            --     "dlx",
-            --     "@zed-industries/claude-code-acp",
-            -- },
             env = {
                 NODE_NO_WARNINGS = "1",
                 IS_AI_TERMINAL = "1",
