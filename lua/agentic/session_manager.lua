@@ -348,7 +348,6 @@ end
 
 --- Create a new session, cancelling any existing one and clearing buffers content
 function SessionManager:new_session()
-    self.widget:clear()
     self:_cancel_session()
 
     self.status_animation:start("busy")
@@ -445,13 +444,15 @@ end
 
 function SessionManager:_cancel_session()
     if self.session_id then
+        -- only cancel and clear content if there was an session
+        -- Otherwise, it clears selections and files when opening for the first time
         self.agent:cancel_session(self.session_id)
+        self.widget:clear()
+        self.file_list:clear()
+        self.code_selection:clear()
     end
 
     self.session_id = nil
-    self.file_list:clear()
-    self.code_selection:clear()
-
     self.permission_manager:clear()
     self.slash_commands:setCommands({})
 end
