@@ -18,7 +18,7 @@ interface, your colors, and your keymaps.
 - **⚡ Performance First** - Optimized for minimal overhead and fast response
   times
 - **🔌 Multiple ACP Providers** - Support for Claude, Gemini, Codex, OpenCode,
-  and Cursor Agent 🥇
+  Cursor Agent, and Qwen Code 🥇
 - **🔑 Zero Config Authentication** - No API keys needed
   - **Keep you secrets secret**: run `claude /login`, or `gemini auth login`
     once and, if they're working on your Terminal, they will work automatically
@@ -84,6 +84,7 @@ tools like `nvm`, `fnm`, etc...
 | [codex-acp][codex-acp]             | `pnpm add -g @zed-industries/codex-acp`<br/> **OR** `npm i -g @zed-industries/codex-acp`<br/> **OR** [Download binary][codex-acp-releases]                    |
 | [opencode][opencode]               | `pnpm add -g opencode-ai`<br/> **OR** `npm i -g opencode-ai`<br/> **OR** `brew install opencode`<br/> **OR** `curl -fsSL https://opencode.ai/install \| bash` |
 | [cursor-agent][cursor-agent]       | `pnpm add -g @blowmage/cursor-agent-acp`<br/> **OR** `npm i -g @blowmage/cursor-agent-acp`                                                                    |
+| [qwen-code][qwen-code]             | Please refer to [QwenLM/qwen-code](https://github.com/QwenLM/qwen-code) for installation instructions                                                          |
 
 > [!WARNING]  
 > These install commands are here for convenience, please always refer to the
@@ -107,7 +108,7 @@ tools like `nvm`, `fnm`, etc...
   event = "VeryLazy",
 
   opts = {
-    -- Available by default: "claude-acp" | "gemini-acp" | "codex-acp" | "opencode-acp" | "cursor-acp"
+    -- Available by default: "claude-acp" | "gemini-acp" | "codex-acp" | "opencode-acp" | "cursor-acp" | "qwen-code-acp"
     provider = "claude-acp", -- setting the name here is all you need to get started
   },
 
@@ -419,6 +420,7 @@ the the acknowledgments 😊.
 [codex-acp-releases]: https://github.com/zed-industries/codex-acp/releases
 [opencode]: https://github.com/sst/opencode
 [cursor-agent]: https://github.com/blowmage/cursor-agent-acp-npm
+[qwen-code]: https://github.com/QwenLM/qwen-code
 
 ### Event Hooks
 

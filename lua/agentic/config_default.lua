@@ -1,4 +1,4 @@
---- @alias agentic.UserConfig.ProviderName "claude-acp" | "gemini-acp" | "codex-acp" | "opencode-acp" | "cursor-acp"
+--- @alias agentic.UserConfig.ProviderName "claude-acp" | "gemini-acp" | "codex-acp" | "opencode-acp" | "cursor-acp" | "qwen-code-acp"
 
 --- Data passed to the on_prompt_submit hook
 --- @class agentic.UserConfig.PromptSubmitData
@@ -85,6 +85,16 @@ local ConfigDefault = {
             name = "Cursor Agent ACP",
             command = "cursor-agent-acp",
             args = {},
+            env = {
+                NODE_NO_WARNINGS = "1",
+                IS_AI_TERMINAL = "1",
+            },
+        },
+
+        ["qwen-code-acp"] = {
+            name = "Qwen Code ACP",
+            command = "qwen",
+            args = {"--experimental-acp"},
             env = {
                 NODE_NO_WARNINGS = "1",
                 IS_AI_TERMINAL = "1",

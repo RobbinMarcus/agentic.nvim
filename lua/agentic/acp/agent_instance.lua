@@ -62,6 +62,10 @@ function AgentInstance.get_instance(provider_name, on_ready)
         local CursorACPAdapter =
             require("agentic.acp.adapters.cursor_acp_adapter")
         client = CursorACPAdapter:new(config, on_ready)
+    elseif provider_name == "qwen-code-acp" then
+        local QwenCodeACPAdapter =
+            require("agentic.acp.adapters.qwen_code_acp_adapter")
+        client = QwenCodeACPAdapter:new(config, on_ready)
     else
         error("Unsupported ACP provider: " .. provider_name)
     end
